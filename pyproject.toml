@@ -1,0 +1,25 @@
+[project]
+name = "sublimaku"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "subliminal>=2.2.1",
+]
+
+[project.scripts]
+hello = "sublimaku:hello"
+
+[project.entry-points."subliminal.providers"]
+jimaku = "sublimaku:JimakuProvider"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.3",
+    "responses>=0.25.3",
+]
