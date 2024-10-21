@@ -1,21 +1,21 @@
 import re
 
-from dataclasses import dataclass
-from typing import Any, ClassVar, NamedTuple
-from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from collections.abc import Callable, Set
+from typing import Any, Annotated, cast, ClassVar, NamedTuple, TypeVar
 
 import requests
 
-from babelfish import Language
-from dogpile.cache import CacheRegion
-from guessit import guessit
+
+from babelfish import Language # type: ignore
+from dogpile.cache import CacheRegion # type: ignore
+from guessit import guessit # type: ignore
 from subliminal import (
     Movie,
     Episode,
     Provider,
     Subtitle,
     Video,
-    
 )
 from subliminal.exceptions import NotInitializedProviderError
 from subliminal.matches import guess_matches
@@ -29,92 +29,187 @@ from sublimaku.jimaku_api import JimakuClient, JimakuEntry,JimakuFile
 
 ani_id_links = AniIDLinkIndexer()
 
-class JimakuSubtitle(Subtitle):
-    provider_name: ClassVar[str] = 'jimaku'
+T = TypeVar('T')
 
-    series: str
-    """Series title"""
-    season: int
-    """Season number"""
-    episode: int
-    """Episode number"""
-    title: str
-    """Episode title"""
-    year: int
-    """Episode year"""
-    release_group: str
-    """Release group name"""
+type VideoDual[T] = Annotated[T, Movie | Episode]
+"""Dual perpose attribute, significance depends on the type of `video`"""
+type EpisodeOnly[T] = Annotated[T, Episode]
+"""Only present on episodes"""
+type MovieOnly[T] = Annotated[T, Movie]
+"""Only present on movies"""
+
+@dataclass
+class VideoMatchable:
+    series: EpisodeOnly[str] | None = None
+    """Name of the Series"""
+    season: EpisodeOnly[int] | None = None
+    """Season number of the series"""
+    episode: EpisodeOnly[int] | None = None
+    """Episode number  of the series"""
+    year: VideoDual[int] | None = None
+    """Year of the series or movie not the episode"""
+    title: VideoDual[str] | None = None
+    """Episode title or Movie title"""
+    alternative_titles: MovieOnly[list[str]] = field(default_factory=list)
+    """Alternative titles for the movie"""
+    alternative_series: EpisodeOnly[list[str]] = field(default_factory=list)
+    """Alternative names for the series"""
+    tmdb_id: VideoDual[int] | None = None
+    """TMDB ID of the exact episode or movie not the series"""
+    imdb_id: VideoDual[str] | None = None
+    """IMDB ID of the exact episode or movie not the series"""
+    series_imdb_id: EpisodeOnly[str] | None = None
+    """IMDB ID of the whole series"""
+    series_tvdb_id: EpisodeOnly[str] | None = None
+    """TVDB ID of the whole series"""
+    series_tmdb_id: EpisodeOnly[int] | None = None
+    """TMDB ID of the whole series"""
+    series_anilist_id: EpisodeOnly[int] | None = None
+    """AniList ID of the whole series"""
+
+
+class JimakuSubtitle(Subtitle):
+    # Super class stuff
+    provider_name: ClassVar[str] = 'jimaku'
+    """The entrypoint? of the provider that produced this subtitle"""
+
+    language: Language
+    """Language of the subtitle"""
+
+    page_link: str | None
+    """Link to the web page from which the subtitle can be downloaded"""
+
+    video: Video
+    """The video providing criteria for this subtitle"""
+
+    file_path: str
+    """
+    The path and file name of the archive file
+    
+    Includes both the possible name of the archive as a directory
+    and any subdirectories in the archive.
+    """
+
+    is_archived: bool
+    """Whether the subtitle is in an archive"""
+
+    matchable: VideoMatchable
+    """Attributes that can be used to match against the video"""
+
 
     def __init__(
         self,
         # Base class parameters
-        language: Language | None,
+        language: Language,
         subtitle_id: str,
         *,
-        hearing_impaired: bool | None = None,
         page_link: str | None = None,
-        encoding: str | None = None,
         subtitle_format: str | None = None,
         fps: float | None = None,
         guess_encoding: bool = True,
 
         # this class specific parameters
+        ##################################
         video: Video,
-        series: str | None = None,
-        season: int | None = None,
-        episode: int | None = None,
-        title: str | None = None,
-        year: int | None = None,
-        release_group: str | None = None,
+        file_path: str,
+        is_archived: bool,
+        matchable: VideoMatchable,
     ):
         super().__init__(
             language,
             subtitle_id,
-            hearing_impaired=hearing_impaired,
             page_link=page_link,
-            encoding=encoding,
             subtitle_format=subtitle_format,
             fps=fps,
             guess_encoding=guess_encoding,
         )
-        self.series = series
-        self.season = season
-        self.episode = episode
-        self.title = title
-        self.year = year
-        self.release_group = release_group
+        self._matchable = matchable
+        self.video = video
+        self.file_path = file_path
+        self.is_archived = is_archived
 
 
     @property
     def info(self) -> str:
         """Information about the subtitle."""
-        # Series (with year)
-        series_year = f'{self.series} ({self.year})' if self.year is not None else self.series
+        return self.file_path
+    
+    # @property
+    # def series(self):
+    #     return self._matchable.series
+    
+    # @property
+    # def season(self):
+    #     return self._matchable.season
 
-        # Title with release group
-        parts = []
-        if self.title:
-            parts.append(self.title)
-        if self.release_group:
-            parts.append(self.release_group)
-        title_part = ' - '.join(parts)
+    # @property
+    # def episode(self):
+    #     return self._matchable.episode
 
-        return f'{series_year} s{self.season:02d}e{self.episode:02d}{title_part}'
+    # @property
+    # def year(self):
+    #     return self._matchable.year
 
+    # @property
+    # def title(self):
+    #     return self._matchable.title
 
-    def get_matches(self, video: Movie | Episode) -> set[str]:
+    # @property
+    # def alternative_titles(self):
+    #     return self._matchable.alternative_titles
+
+    # @property
+    # def alternative_series(self):
+    #     return self._matchable.alternative_series
+
+    # @property
+    # def tmdb_id(self):
+    #     return self._matchable.tmdb_id
+
+    # @property
+    # def imdb_id(self):
+    #     return self._matchable.imdb_id
+    
+    # @property
+    # def series_imdb_id(self):
+    #     return self._matchable.series_imdb_id
+    
+    # @property
+    # def series_tvdb_id(self):
+    #     return self._matchable.series_tvdb_id
+    
+    # @property
+    # def series_tmdb_id(self):
+    #     return self._matchable.series_tmdb_id
+    
+    # @property
+    # def series_anilist_id(self):
+    #     return self._matchable.series_anilist_id
+
+    def get_matches(self, video: Video) -> set[str]:
         """Get the matches against the `video`."""
+
+        matchable = self._matchable
+
+        guess: dict[str, Any] = cast(dict[str, Any], guessit(self.file_path))
+        assert isinstance(guess, dict)
 
         # series name
         matches = guess_matches(
             video,
             {
-                'title': self.series,
-                'season': self.season,
-                'episode': self.episode,
-                'episode_title': self.title,
-                'year': self.year,
-                'release_group': self.release_group,
+                'series': matchable.series,
+                'title': matchable.title,
+                'season': matchable.season,
+                'episode': matchable.episode,
+                'year': matchable.year,
+                #'country': matchable.country,
+                #'release_group': release_group_matches,
+                #'streaming_service': streaming_service_matches,
+                #'resolution': resolution_matches,
+                #'source': source_matches,
+                #'video_codec': video_codec_matches,
+                #'audio_codec': audio_codec_matches,
             },
         )
 
@@ -123,8 +218,6 @@ class JimakuSubtitle(Subtitle):
         #     matches |= guess_matches(video, guessit(self.release_group, {'type': 'episode'}), partial=True)
 
         return matches
-    
-
 
 
 class ArchiveRepo:
@@ -132,32 +225,33 @@ class ArchiveRepo:
     def __init__(self, region: CacheRegion = region):
         self._region = region
     
-    def list_zip(self, jimaku_file: JimakuFile) -> list[str]:
+    def list_zip(self, jimaku_file: JimakuFile):
         pass
 
 
     @classmethod
-    def supported(cls, file: JimakuFile) -> bool:
+    def has_supported_ext(cls, file: JimakuFile) -> bool:
         name = file.name
         stem = name.split('.')[-1].lower()
         return stem in cls.supported_exts
     
 
 def create_query_filter():
-    surrounds = lambda s: fr'[\[\(]{s}[\]\)]'
+    br: Callable[[str], str] = lambda s: fr'[\[\(]{s}[\]\)]'
     whisper_expr = re.compile(
-        fr'{surrounds("whisperai")}|{surrounds("whisper")}', re.IGNORECASE
+        fr'{br("whisperai")}|{br("whisper")}', re.IGNORECASE
     )
 
     exts = set(ext[1:] for ext in SUBTITLE_EXTENSIONS)
 
     min_size = 500
     def filter_query(result: QueryResult) -> bool:
+        file_path = result.file_path
         return (
             # get rid of whisperai trash.
-            not whisper_expr.search(result.real_filename)
+            not whisper_expr.search(file_path.lower())
             # filter out all the archive files for now.
-            and '.'.split(result.real_filename)[-1].lower() in exts
+            and '.'.split(file_path)[-1].lower() in exts
             # discard files that are too small to be real subtitles
             and result.real_file_size >= min_size
         )
@@ -167,36 +261,41 @@ def create_query_filter():
 
 
 class QueryResult(NamedTuple):
+    # entry object returned by api
     api_entry: JimakuEntry
+    # file object returned by api associated with the entry
     api_file: JimakuFile
-    real_filename: str
+    # file size as extracted if arhived
     real_file_size: int
+    # path of the file including the archive as the directory
+    # ex:
+    # "Show Name - Season 01.zip/some directory name/Show Name - 01.srt"
+    file_path: str
     is_archived: bool
     archive_name: str | None = None
     archive_key: str | None = None
 
 
-class JimakuProvider(Provider):
-    languages: set[Language] = {Language('jpn')}
+class JimakuProvider(Provider[JimakuSubtitle]):
+    languages: ClassVar[Set[Language]] = frozenset({Language('jpn')})
 
     subtitle_class = JimakuSubtitle
 
-    def __init__(self, apikey: str):
+    def __init__(
+        self, 
+        apikey: str,
+        jimaku_client: JimakuClient | None = None,
+        session: requests.Session | None = None,
+        archive_repo: ArchiveRepo | None = None,
+    ):
         self.apikey = apikey
 
-    def initialize(
-            self,
-            jimaku_client: JimakuClient | None = None,
-            session: requests.Session | None = None,
-            archive_repo: ArchiveRepo | None = None
-    ) -> None:
-        """Initialize the provider."""
         self.session = (
             session
             if session else session_factory(requests.Session())
         )
 
-        self.session.headers.setdefault('Api-Key', self.apikey)
+        self.session.headers.setdefault('Authorization', self.apikey)
 
         self.jimaku_client = (
             jimaku_client
@@ -208,70 +307,152 @@ class JimakuProvider(Provider):
             if archive_repo else ArchiveRepo()
         )
 
+
+    def initialize(self) -> None:
+        """Initialize the provider."""
+
     def terminate(self) -> None:
         """Terminate the provider."""
         if not self.session:
             raise NotInitializedProviderError
 
-    def query(self, video: Movie | Episode) -> QueryResult:
-        """Query the provider for subtitles."""
 
-        tmdb_id = video.tmdb_id
-        anilist_id = getattr(video, 'anilist_id', None)
-    
-        if tmdb_id and not anilist_id:
-            id_links =ani_id_links.lookup_themoviedb_id(tmdb_id)
-            anilist_id = id_links.get('anilist_id') if id_links else None
+    def query(self, video: Video) -> list[JimakuSubtitle]:
+        """
+        Query Jimaku based on video attrs and Transform results
 
-        use_anilist = anilist_id is not None
-        use_tmdb = not use_anilist and tmdb_id is not None
-        use_fuzzy = not use_anilist and use_tmdb
+        Jimaku doesn't track episode specific information aso all the
+        id's in this code are for the whole series and not invdividual
+        episodes.
+        """
+
+        id_link = (
+            ani_id_links.lookup_themoviedb_id(video.tmdb_id)
+            if video.tmdb_id else None
+        )
+
+
+        anilist_id = None
+        if id_link:
+            anilist_id = (
+                getattr(video, 'series_anilist_id', None) or
+                id_link.get('anilist_id')
+            )
 
         title = video.series if isinstance(video, Episode) else video.title
 
-        entries = self.jimaku_client.search(
-            anilist_id=anilist_id if use_anilist else None,
-            tmdb_series_id=tmdb_id if not anilist_id else None,
-            tmdb_series_id_is_movie=use_tmdb and isinstance(video, Movie),
-            query=title if use_fuzzy else None
+        is_movie = isinstance(video, Movie)
+        # results = filter(create_query_filter(), self.query(video))
+        results = self.query_jimaku(
+            anilist_id=anilist_id,
+            tmdb_id=video.tmdb_id,
+            title=title,
+            is_movie=is_movie
         )
+
+
+        series_imdb_id = None
+        imdb_id = None # movie id, else the episode id
+        series_tvdb_id = None
+        if id_link:
+            if is_movie:
+                imdb_id = id_link.get('imdb_id')
+            else:
+                series_imdb_id = id_link.get('imdb_id')
+                series_tvdb_id = id_link.get('tvdb_id')
+
+        def create_subtitle(result: QueryResult) -> JimakuSubtitle:
+            api_entry = result.api_entry
+            file_path = result.file_path
+            page_link = f"https://jimaku.cc/entry/{api_entry.id}"
+
+            alternatives: list[str] = [
+                title for title in (api_entry.name, api_entry.japanese_name)
+                if isinstance(title, str)
+            ]
+
+
+            matchable = None
+            if is_movie:
+                matchable = VideoMatchable(
+                    title=api_entry.english_name,
+                    alternative_titles=alternatives,
+                    tmdb_id=api_entry.tmdb_id,
+                    imdb_id=imdb_id,
+                )
+
+            else:
+                matchable = VideoMatchable(
+                    series = api_entry.english_name,
+                    series_tmdb_id=api_entry.tmdb_id,
+                    series_anilist_id=api_entry.anilist_id,
+                    series_imdb_id=series_imdb_id,
+                    series_tvdb_id=series_tvdb_id,
+                    alternative_series=alternatives,
+            )
+
+            return JimakuSubtitle(
+                Language('jpn'),
+                f"{api_entry.id}:{file_path}",
+                matchable=matchable,
+                page_link=page_link,
+                video=video,
+                file_path=file_path,
+                is_archived=False,
+            )
+
+        return [create_subtitle(result) for result in results]
+
+    def query_jimaku(
+        self,
+        anilist_id: int | None = None,
+        tmdb_id: int | None = None,
+        title: str | None = None,
+        is_movie: bool | None = None
+    ) -> list[QueryResult]:
+        """Query the provider for subtitles."""
+
+        entries = None
+        # prefer anilist
+        if anilist_id:
+            entries = self.jimaku_client.search(
+                anilist_id=anilist_id
+            )
+
+        if not entries and tmdb_id:
+            entries = self.jimaku_client.search(
+                tmdb_id=tmdb_id,
+                tmdb_is_movie=is_movie,
+            )
 
         if not entries:
             entries = self.jimaku_client.search(query=title)
 
         if not entries:
-            return None
-
-
-        api_entry = entries[0]
-        api_files = self.jimaku_client.files(jimaku_id=api_entry.id)
+            return []
 
         results: list[QueryResult] = []
-        for api_file in api_files:
-            if self.archive_repo.supported(api_file):
-                continue
-            else:
-                result = QueryResult(
-                    api_entry=api_entry,
-                    api_file=api_file,
-                    real_filename=api_file.name,
-                    real_file_size=api_file.size,
-                    is_archived=False,
-                )
-                results.append(result)
+        for entry in entries:
+            files = self.jimaku_client.files(jimaku_id=entry.id)
+            for file in files:
+                if self.archive_repo.has_supported_ext(file):
+                    continue
+                else:
+                    result = QueryResult(
+                        api_entry=entry,
+                        api_file=file,
+                        # no archive support yet for the bellow
+                        file_path=file.name,
+                        real_file_size=file.size,
+                        is_archived=False,
+                    )
+                    results.append(result)
 
         return results
         
 
-    def list_subtitles(self, video: Video, *args, **kwargs) -> list[JimakuSubtitle]:
-        results = filter(create_query_filter(), self.query(video))
+    def list_subtitles(
+            self, video: Video, languages: Set[Language]
+    ) -> list[JimakuSubtitle]:
 
-        def create(result: QueryResult) -> JimakuSubtitle:
-            api_entry = result.api_entry
-            filename = result.real_filename
-            page_link = f"https://jimaku.cc/entry/{api_entry.id}"
-            return JimakuSubtitle(None, filename, page_link=page_link)
-
-        return [create(result) for result in results]
-
-
+        return self.query(video)

@@ -101,11 +101,13 @@ def test_no_find_tmdb():
     assert found == None
 
 
+# TODO: this doesn't actually test anything
 def test_fetch_data():
     indexer = AniIDLinkIndexer()
     assert indexer.ani_id_links() == test_links
 
 
+# TODO: this doesn't actually test anything
 def test_uses_cached_etags(mock_cache):
     mock_cache.set(AniIDLinksCache.etag_key, 'test_etag')
     indexer = AniIDLinkIndexer()

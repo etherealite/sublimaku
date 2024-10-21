@@ -58,6 +58,9 @@ class AniIDLinksCache:
         cls.region.set(cls.etag_key, etag)
 
 
+# TODO:
+# injection all this junk through the constructor sucks. It would be better to to make the link cache 
+# an injected component to make testing easier.
 class AniIDLinkIndexer:
     data_url: str = 'https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-mini.json'
     # _ani_id_links: list[AniIDLink]

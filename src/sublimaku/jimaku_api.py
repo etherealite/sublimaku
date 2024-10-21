@@ -6,8 +6,10 @@ from urllib.parse import urlparse, urlencode, urlparse
 
 import requests
 
+from subliminal.cache import region, SHOW_EXPIRATION_TIME
 
 from sublimaku.common import session_factory
+
 
 
 @dataclass
@@ -94,7 +96,7 @@ class JimakuEntry:
             "description": "Extra notes that the entry might have. Supports a limited set of markdown. Can only be set by editors."
         },
     )
-    tmdb_series_id: str | None = field(
+    tmdb_id: int | None = field(
         default=None,
         metadata={
             "description": "The TMDB ID of this entry.",
@@ -116,7 +118,7 @@ class JimakuEntry:
 class JimakuClient:
     _session: requests.Session
 
-    def __init__(self, apikey: str, session: requests.Session = None) -> None:
+    def __init__(self, apikey: str, session: requests.Session | None = None) -> None:
         self.url_base = 'https://jimaku.cc'
 
         if not session:
@@ -125,11 +127,12 @@ class JimakuClient:
 
         self._session = session
 
+    @region.cache_on_arguments(expiration_time=SHOW_EXPIRATION_TIME)
     def search(
             self,
             anilist_id: int | str | None = None,
-            tmdb_series_id: int | str | None = None,
-            tmdb_series_id_is_movie: bool | None = None,
+            tmdb_id: int | str | None = None,
+            tmdb_is_movie: bool | None = None,
             query: str | None = None
     ) -> tuple[JimakuEntry, ...]:
         """
@@ -138,54 +141,55 @@ class JimakuClient:
             endpoint:GET /api/entries/search{?anilist_id,tmdb_series_id,query}
         """
 
-        assert (anilist_id or tmdb_series_id or query)
+        assert (anilist_id or tmdb_id or query)
 
-        if tmdb_series_id:
-            assert(tmdb_series_id_is_movie is not None)
-            tmdb_type = 'movie' if tmdb_series_id_is_movie else 'tv'
+        if tmdb_id:
+            assert(tmdb_is_movie is not None)
+            tmdb_type = 'movie' if tmdb_is_movie else 'tv'
         else:
             tmdb_type = None
 
 
         params: dict[str, str] = dict(
             **{'anilist_id': anilist_id} if anilist_id else {},
-            **{'tmdb_series_id': f"{tmdb_type}:{tmdb_series_id}"} if tmdb_series_id else {},
+            **{'tmdb_id': f"{tmdb_type}:{tmdb_id}"} if tmdb_id else {},
             **{'query': query} if query else {},
         )
 
 
         params_encoded = urlencode(params)
 
-        url = f"/api/entries/search?{params_encoded}"
+        endpoint = f"/api/entries/search?{params_encoded}"
 
         try:
-            response = self._session.get(self.url_base + url)
+            response = self._session.get(self.url_base + endpoint)
         except Exception as e:
             raise e
 
         if response.status_code != 200:
-            return ()
+            response.raise_for_status()
         
 
         return tuple(
             JimakuEntry(**entry,)
-            for entry in response.json().get('entries', ())
+            for entry in response.json()
         )
-    
+
+
+    @region.cache_on_arguments(expiration_time=SHOW_EXPIRATION_TIME)
     def files(self, jimaku_id: int) -> tuple[JimakuFile, ...]:
         """
             Gets the files of the given jimaku entry id. 
             
             endpoint:GET /api/entries/{id}/files
-
-
         """
-        response = self._session.get(f"/api/entries/{jimaku_id}/files")
+        endpoint = f"/api/entries/{jimaku_id}/files"
+        response = self._session.get(self.url_base + endpoint)
 
         if response.status_code != 200:
-            return
+            response.raise_for_status()
         
         return tuple(
             JimakuFile(**file)
-            for file in response.json().get('files', ())
+            for file in response.json()
         )
